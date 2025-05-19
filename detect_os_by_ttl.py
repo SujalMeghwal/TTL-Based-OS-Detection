@@ -1,67 +1,103 @@
 import subprocess
 import re
+import platform
+import sys
 
-# Define the IP address to ping.
-# You can change this to any IP address you want to test.
-IP = input("Enter IP: ")
+def get_ttl_from_ping(ip: str, count=1, timeout=2) -> int | None:
+    """
+    Pings the target IP and extracts the TTL value from the response.
+    Supports Windows, Linux, and macOS platforms.
+    Returns TTL as integer if found, else None.
+    """
+    # Determine platform-specific ping parameters
+    param_count = '-n' if platform.system().lower() == 'windows' else '-c'
+    param_timeout = '-w' if platform.system().lower() == 'windows' else '-W'
 
-# Regular expression pattern to capture the TTL value from the ping output.
-pattern = r"TTL=(\d+)"
+    # Build the ping command
+    cmd = ['ping', param_count, str(count), param_timeout, str(timeout), ip]
 
-try:
-    # Execute the ping command with the provided IP address.
-    # The '-n 1' option sends only one ping request.
-    # 'capture_output=True' captures the output of the command.
-    # 'text=True' ensures the output is returned as a string.
-    # 'check=True' raises an exception if the ping command fails.
-    action = subprocess.run(['ping', IP, '-n', '1'], capture_output=True, text=True, check=True)
-    
-    # Store the command's output.
-    result = action.stdout
-    
-    # Search for the TTL value in the ping output using the regular expression pattern.
-    match = re.search(pattern, result)
-    
-    if match:
-        # Extract the TTL value from the matched pattern and convert it to an integer.
-        ttl_value = int(match.group(1))
-        
-        # Determine the operating system or device based on the TTL value.
-        if ttl_value == 128:
-            print("Running OS: Windows")
-        elif ttl_value == 64:
-            print("Running OS: Linux/FreeBSD/OSX/Juniper/HP-UX")
-        elif ttl_value == 255:
-            print("IP belongs to a Cisco device")
-        elif ttl_value == 254:
-            print("Running OS: Solaris/AIX")
-        elif ttl_value == 252:
-            print("Running OS: Windows Server 2003/XP")
-        elif ttl_value == 240:
-            print("Running OS: Novell")
-        elif ttl_value == 200:
-            print("Running OS: HP-UX")
-        elif ttl_value == 190:
-            print("Running OS: MacOS")
-        elif ttl_value == 127:
-            print("Running OS: MacOS")
-        elif ttl_value == 100:
-            print("Running OS: IBM OS/2")
-        elif ttl_value == 60:
-            print("Running OS: AIX")
-        elif ttl_value == 50:
-            print("Running OS: Windows 95/98/ME")
-        elif ttl_value == 48:
-            print("Running OS: BSDI")
-        elif ttl_value == 30:
-            print("Running OS: SunOS")
+    try:
+        # Run the ping command
+        completed_process = subprocess.run(
+            cmd, capture_output=True, text=True, check=True
+        )
+        output = completed_process.stdout.lower()
+
+        # Regex to find TTL; flexible for Windows/Linux/macOS outputs
+        # Windows: TTL=128
+        # Linux/macOS: ttl=64 or ttl 64
+        ttl_search = re.search(r'ttl[=:\s]?(\d+)', output)
+
+        if ttl_search:
+            return int(ttl_search.group(1))
         else:
-            print("Unknown OS or device")
-    else:
-        # If the TTL value is not found in the output, inform the user.
-        print("Cannot detect OS, TTL value not found")
-except subprocess.CalledProcessError as e:
-    # Handle errors from the ping command.
-    print(f"Ping failed: {e}")
+            return None
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Ping command failed: {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"[ERROR] Unexpected error: {e}", file=sys.stderr)
+        return None
 
-input("Press Any Key To Exit")
+
+def identify_os_from_ttl(ttl: int) -> str:
+    """
+    Maps TTL values to probable OS/device types.
+    Uses TTL ranges for better heuristic detection.
+    """
+    if ttl >= 128 and ttl <= 255:
+        if ttl == 255:
+            return "Cisco Device"
+        elif ttl >= 128 and ttl < 256:
+            return "Windows OS (likely Windows Server or Desktop)"
+    elif ttl >= 64 and ttl < 128:
+        if ttl == 64:
+            return "Linux/FreeBSD/macOS/Unix-like"
+        elif ttl == 100:
+            return "IBM OS/2"
+        elif ttl == 127 or ttl == 190:
+            return "macOS"
+    elif ttl >= 30 and ttl < 64:
+        if ttl == 50:
+            return "Windows 95/98/ME"
+        elif ttl == 60:
+            return "AIX"
+        elif ttl == 48:
+            return "BSDI"
+        elif ttl == 30:
+            return "SunOS"
+    elif ttl >= 200 and ttl < 256:
+        if ttl == 240:
+            return "Novell"
+        elif ttl == 254:
+            return "Solaris/AIX"
+        elif ttl == 200:
+            return "HP-UX"
+    # Fallback range check (TTL generally starts at 64, 128, 255 depending on OS)
+    if 50 <= ttl <= 64:
+        return "Likely Unix/Linux or macOS variant"
+    if 120 <= ttl <= 130:
+        return "Likely Windows variant"
+    return "Unknown OS or device"
+
+
+def main():
+    ip = input("Enter IP: ").strip()
+    if not ip:
+        print("No IP entered. Exiting.")
+        return
+
+    ttl_value = get_ttl_from_ping(ip)
+
+    if ttl_value is None:
+        print("Cannot detect OS, TTL value not found or ping failed.")
+    else:
+        os_guess = identify_os_from_ttl(ttl_value)
+        print(f"Detected TTL: {ttl_value}")
+        print(f"Running OS/device guess: {os_guess}")
+
+    input("Press any key to exit...")
+
+
+if __name__ == '__main__':
+    main()
